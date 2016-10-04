@@ -42,17 +42,17 @@ run.var.tests <- function (g,h,one_row=FALSE,has_nas=FALSE) {
       } else {
         h2o_var <- var(h2o_g, h2o_h, na.rm = na.rm, use = use)
       }
-      R_var <- var(g,h, na.rm = na.rm, use = use)
+      R_var <- stats::var(g,h, na.rm = na.rm, use = use)
       h2o_and_R_equal(h2o_var, R_var)
 
       #1 input
       h2o_var <- var(h2o_g, na.rm=na.rm, use=use)
-      R_var <- var(g, na.rm=na.rm, use=use)
+      R_var <- stats::var(g, na.rm=na.rm, use=use)
       h2o_and_R_equal(h2o_var, R_var)
     
       #other input
       h2o_var <- var(h2o_h, na.rm=na.rm, use=use)
-      R_var <- var(h, na.rm=na.rm, use=use)
+      R_var <- stats::var(h, na.rm=na.rm, use=use)
       h2o_and_R_equal(h2o_var, R_var)    
     }
   }
