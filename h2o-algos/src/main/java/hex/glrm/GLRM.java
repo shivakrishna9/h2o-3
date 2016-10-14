@@ -991,6 +991,7 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
 
     // Extract Y_j the k by d_j block of Y corresponding to categorical column j
     // Note: d_j = number of levels in categorical column j
+    // TODO: remove this function once I am done verifying new implementation works.
     protected final double[][] getCatBlock(int j) {
       assert _numLevels[j] != 0 : "Number of levels in categorical column cannot be zero";
       double[][] block = new double[rank()][_numLevels[j]];
@@ -1182,7 +1183,6 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
       double[] grad = new double[_ncolX];
       double[] tgrad = new double[_ncolX];  // temporary gradient for comparison
       double[] u = new double[_ncolX];
-      double[] txy = new double[_ncolX];
       Chunk chkweight = _weightId >= 0 ? cs[_weightId] : new C0DChunk(1, cs[0]._len);
       Random rand = RandomUtils.getRNG(0);
       _loss = _xreg = 0;
@@ -1278,9 +1278,16 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
         // Categorical columns
         for (int j = 0; j < _ncats; j++) {
           if (Double.isNaN(a[j])) continue;   // Skip missing observations in row
-          Arrays.fill(txy, 0.0);
           double[] xy = ArrayUtils.multVecArr(xnew, _yt.getCatBlock(j));
+
+          double[] txy = multVecArrFast(xnew, _yt, j);
           _loss +=  _lossFunc[j].mloss(xy, (int) a[j]);
+
+          // check to see if xy and txy are the same, comment it out, do not delete yet.
+          double diff = 0.0;
+          for (int index = 0; index < txy.length; index++)
+            diff += xy[index]-txy[index];
+          assert diff < 1e-10;
         }
 
         // Numeric columns
@@ -1293,6 +1300,27 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
         }
         _loss *= cweight;
       }
+    }
+
+
+    /* same as ArrayUtils.multVecArr() but faster I hope. */
+    private double[] multVecArrFast(double[] xnew, Archetypes yt, int j) {
+      double[] xy = new double[yt._numLevels[j]];
+
+      for (int level = 0; level < yt._numLevels[j]; level++) {
+        int cidx = yt.getCatCidx(j, level);
+        for (int k = 0; k < _ncolX; k++) {
+          double archValue = 0.0;
+
+          if (yt._transposed)
+            archValue = yt._archetypes[cidx][k];
+          else
+            archValue = yt._archetypes[k][cidx];
+
+          xy[level] += xnew[k] * archValue;
+        }
+      }
+      return xy;
     }
 
     @Override public void reduce(UpdateX other) {
