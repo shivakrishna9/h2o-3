@@ -31,6 +31,7 @@ def glrm_PUBDEV_3454():
 
 #  seeds = 1475363366    # a good seed
 #  seeds = 1475600507    # seed with high iteration number
+  seeds = 12345
 
   # datahex = \
   #     h2o.upload_file(pyunit_utils.locate("/Users/wendycwong/Documents/PUBDEV_3454_GLRM/glrm_data_DTolstonogov.csv"),
