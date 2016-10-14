@@ -647,9 +647,7 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
           standardizeA = new StandardizeA(_ncolA, _ncolX, dinfo._cats, model._output._normSub,
                   model._output._normMul).doAll(dinfo._adaptedFrame);
         }
-
-        Log.info("Time taken (ms) to initializeXY with (Y operation single thread) is "
-                +(System.currentTimeMillis()-curtime));
+        
         // Store Y' for more efficient matrix ops (rows = features, cols = k rank)
         Archetypes yt = new Archetypes(ArrayUtils.transpose(yinit), true, tinfo._catOffsets, numLevels);
         Archetypes ytnew = yt;
