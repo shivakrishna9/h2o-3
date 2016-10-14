@@ -587,13 +587,19 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
                              false, false, false, /* weights */ false, /* offset */ false, /* fold */ false);
         DKV.put(tinfo._key, tinfo);
 
+        double[] deMul = new double[tinfo._nums];   // used to de-normalized dataset after training is done
         // Save training frame adaptation information for use in scoring later
         model._output._normSub = tinfo._normSub == null ? new double[tinfo._nums] : tinfo._normSub;
         if (tinfo._normMul == null) {
           model._output._normMul = new double[tinfo._nums];
           Arrays.fill(model._output._normMul, 1.0);
-        } else
+          Arrays.fill(deMul,1.0);
+        } else {
           model._output._normMul = tinfo._normMul;
+
+          for (int index = 0; index < tinfo._nums; index++)
+            deMul[index] = 1.0/tinfo._normMul[index];
+        }
         model._output._permutation = tinfo._permutation;
         model._output._nnums = tinfo._nums;
         model._output._ncats = tinfo._cats;
@@ -634,7 +640,16 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
 
         curtime = System.currentTimeMillis();
         double[/*k*/][/*features*/] yinit = initialXY(tinfo, dinfo._adaptedFrame, model, na_cnt); // on normalized A
-        
+
+        // perform normalization on matrix A if needed.
+        StandardizeA standardizeA = null;
+        if (_parms._transform != DataInfo.TransformType.NONE) {
+          standardizeA = new StandardizeA(_ncolA, _ncolX, dinfo._cats, model._output._normSub,
+                  model._output._normMul).doAll(dinfo._adaptedFrame);
+        }
+
+        Log.info("Time taken (ms) to initializeXY with (Y operation single thread) is "
+                +(System.currentTimeMillis()-curtime));
         // Store Y' for more efficient matrix ops (rows = features, cols = k rank)
         Archetypes yt = new Archetypes(ArrayUtils.transpose(yinit), true, tinfo._catOffsets, numLevels);
         Archetypes ytnew = yt;
@@ -654,9 +669,9 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
         boolean regX = _parms._regularization_x != GlrmRegularizer.None && _parms._gamma_x != 0;
 
         curtime = System.currentTimeMillis();
-        ObjCalc objtsk = new ObjCalc(_parms, yt, _ncolA, _ncolX, dinfo._cats, model._output._normSub,
-                                     model._output._normMul, model._output._lossFunc, weightId, regX);
-
+/*        ObjCalc objtsk = new ObjCalc(_parms, yt, _ncolA, _ncolX, dinfo._cats, model._output._normSub,
+                                     model._output._normMul, model._output._lossFunc, weightId, regX); */
+        ObjCalc objtsk = new ObjCalc(_parms, yt, _ncolA, _ncolX, dinfo._cats, model._output._lossFunc, weightId, regX);
         objtsk.doAll(dinfo._adaptedFrame);
         Log.info("Time taken (ms) to calculate regularize_x and calculate objective function value is "
                 +(System.currentTimeMillis()-curtime));
@@ -681,8 +696,10 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
 
           // find out how much time it takes to update x
           curtime = System.currentTimeMillis();
-          UpdateX xtsk = new UpdateX(_parms, yt, step/_ncolA, overwriteX, _ncolA, _ncolX, dinfo._cats, model._output._normSub, model._output._normMul, model._output._lossFunc, weightId);
-
+ //         UpdateX xtsk = new UpdateX(_parms, yt, step/_ncolA, overwriteX, _ncolA, _ncolX, dinfo._cats,
+          // model._output._normSub, model._output._normMul, model._output._lossFunc, weightId);
+          UpdateX xtsk = new UpdateX(_parms, yt, step/_ncolA, overwriteX, _ncolA, _ncolX, dinfo._cats,
+                  model._output._lossFunc, weightId);
           xtsk.doAll(dinfo._adaptedFrame);
           model._output._updates++;
           Log.info("Time taken (ms) to updateX is "+(System.currentTimeMillis()-curtime));
@@ -691,8 +708,10 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
           curtime = System.currentTimeMillis();
           if (model._output._updates < _parms._max_updates) {
             // If max_updates is odd, we will terminate after the X update
-            UpdateY ytsk = new UpdateY(_parms, yt, step/_ncolA, _ncolA, _ncolX, dinfo._cats, model._output._normSub,
-                    model._output._normMul, model._output._lossFunc, weightId);
+//            UpdateY ytsk = new UpdateY(_parms, yt, step/_ncolA, _ncolA, _ncolX, dinfo._cats, model._output._normSub,
+//                    model._output._normMul, model._output._lossFunc, weightId);
+            UpdateY ytsk = new UpdateY(_parms, yt, step/_ncolA, _ncolA, _ncolX, dinfo._cats,
+                    model._output._lossFunc, weightId);
             double[][] yttmp = ytsk.doAll(dinfo._adaptedFrame)._ytnew;
             ytnew = new Archetypes(yttmp, true, dinfo._catOffsets, numLevels);
             yreg = ytsk._yreg;
@@ -703,7 +722,9 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
           // 3) Compute average change in objective function
           curtime = System.currentTimeMillis();
 
-          objtsk = new ObjCalc(_parms, ytnew, _ncolA, _ncolX, dinfo._cats, model._output._normSub, model._output._normMul, model._output._lossFunc, weightId);
+//          objtsk = new ObjCalc(_parms, ytnew, _ncolA, _ncolX, dinfo._cats, model._output._normSub,
+// model._output._normMul, model._output._lossFunc, weightId);
+          objtsk = new ObjCalc(_parms, ytnew, _ncolA, _ncolX, dinfo._cats, model._output._lossFunc, weightId);
           objtsk.doAll(dinfo._adaptedFrame);
           double obj_new = objtsk._loss + _parms._gamma_x * xtsk._xreg + _parms._gamma_y * yreg;
           Log.info("Time taken (ms) to calculate new objective function value is "
@@ -741,6 +762,13 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
           model._output._scoring_history = createScoringHistoryTable(model._output);
           model.update(_job); // Update model in K/V store
           Log.info("Time taken (ms) to history of run is "+(System.currentTimeMillis()-curtime));
+        }
+
+        // perform normalization on matrix A if needed.
+        DeStandardizeA deStandardizeA = null;
+        if (_parms._transform != DataInfo.TransformType.NONE) {
+          deStandardizeA = new DeStandardizeA(_ncolA, _ncolX, dinfo._cats, model._output._normSub,
+                  deMul).doAll(dinfo._adaptedFrame);
         }
 
         // 4) Save solution to model output
@@ -1112,16 +1140,18 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
     final int _ncolA;         // Number of cols in training frame
     final int _ncolX;         // Number of cols in X (k)
     final int _ncats;         // Number of categorical cols in training frame
-    final double[] _normSub;  // For standardizing training data
-    final double[] _normMul;
+//    final double[] _normSub;  // For standardizing training data
+//    final double[] _normMul;  // TODO: Remove normSub and normMul after things checked out for standardization A onces
     final int _weightId;
 
     // Output
     double _loss;    // Loss evaluated on A - XY using new X (and current Y)
     double _xreg;    // Regularization evaluated on new X
 
+//    UpdateX(GLRMParameters parms, Archetypes yt, double alpha, boolean update, int ncolA, int ncolX, int ncats,
+//          double[] normSub, double[] normMul, GlrmLoss[] lossFunc, int weightId) {
     UpdateX(GLRMParameters parms, Archetypes yt, double alpha, boolean update, int ncolA, int ncolX, int ncats,
-            double[] normSub, double[] normMul, GlrmLoss[] lossFunc, int weightId) {
+            GlrmLoss[] lossFunc, int weightId) {
       assert yt != null && yt.rank() == ncolX;
       _parms = parms;
       _yt = yt;
@@ -1135,8 +1165,8 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
       assert ncats <= ncolA;
       _ncats = ncats;
       _weightId = weightId;
-      _normSub = normSub;
-      _normMul = normMul;
+//      _normSub = normSub;
+//      _normMul = normMul;
     }
 
     private Chunk chk_xold(Chunk[] chks, int c) {
@@ -1238,7 +1268,8 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
             xy += chk_xold(cs, k).atd(row) * _yt.getNum(js, k);
 
           // Sum over y_j weighted by gradient of loss \grad L_{i,j}(x_i * y_j, A_{i,j})
-          double weight = cweight * _lossFunc[j].lgrad(xy, (a[j] - _normSub[js]) * _normMul[js]);
+//          double weight = cweight * _lossFunc[j].lgrad(xy, (a[j] - _normSub[js]) * _normMul[js]);
+          double weight = cweight * _lossFunc[j].lgrad(xy, a[j]);
           for (int k = 0; k < _ncolX; k++)
             tgrad[k] += weight * _yt.getNum(js, k);
 //            grad[k] += weight * _yt.getNum(js, k);
@@ -1282,7 +1313,8 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
           int js = j - _ncats;
           if (Double.isNaN(a[j])) continue;   // Skip missing observations in row
           double xy = _yt.lmulNumCol(xnew, js);
-          _loss += _lossFunc[j].loss(xy, (a[j] - _normSub[js]) * _normMul[js]);
+//          _loss += _lossFunc[j].loss(xy, (a[j] - _normSub[js]) * _normMul[js]);
+          _loss += _lossFunc[j].loss(xy, a[j]);
         }
         _loss *= cweight;
       }
@@ -1333,16 +1365,18 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
     final int _ncolA;         // Number of cols in training frame
     final int _ncolX;         // Number of cols in X (k)
     final int _ncats;         // Number of categorical cols in training frame
-    final double[] _normSub;  // For standardizing training data
-    final double[] _normMul;
+//    final double[] _normSub;  // For standardizing training data
+//    final double[] _normMul;
     final int _weightId;
 
     // Output
     double[][] _ytnew;  // New Y matrix
     double _yreg;       // Regularization evaluated on new Y
 
-    UpdateY(GLRMParameters parms, Archetypes yt, double alpha, int ncolA, int ncolX, int ncats, double[] normSub,
-            double[] normMul, GlrmLoss[] lossFunc, int weightId) {
+ /*   UpdateY(GLRMParameters parms, Archetypes yt, double alpha, int ncolA, int ncolX, int ncats, double[] normSub,
+            double[] normMul, GlrmLoss[] lossFunc, int weightId) { */
+    UpdateY(GLRMParameters parms, Archetypes yt, double alpha, int ncolA, int ncolX, int ncats,
+            GlrmLoss[] lossFunc, int weightId) {
       assert yt != null && yt.rank() == ncolX;
       _parms = parms;
       _lossFunc = lossFunc;
@@ -1356,8 +1390,8 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
       assert ncats <= ncolA;
       _ncats = ncats;
       _weightId = weightId;
-      _normSub = normSub;
-      _normMul = normMul;
+//      _normSub = normSub;    // TODO: Remove normSub and normMul after things checked out for standardization A onces
+ //     _normMul = normMul;
     }
 
     private Chunk chk_xnew(Chunk[] chks, int c) {
@@ -1418,7 +1452,8 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
             xy += chk_xnew(cs, k).atd(row) * _ytold.getNum(js,k);
 
           // Sum over x_i weighted by gradient of loss \grad L_{i,j}(x_i * y_j, A_{i,j})
-          double weight = cweight * _lossFunc[j].lgrad(xy, (a - _normSub[js]) * _normMul[js]);
+//          double weight = cweight * _lossFunc[j].lgrad(xy, (a - _normSub[js]) * _normMul[js]);
+          double weight = cweight * _lossFunc[j].lgrad(xy, a);
           for (int k = 0; k < _ncolX; k++)
             _ytnew[yidx][k] += weight * chk_xnew(cs, k).atd(row);
         }
@@ -1448,6 +1483,82 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
     }
   }
 
+  // Perform de-standardization over matrix A for non NA values only
+  private static class DeStandardizeA extends MRTask<DeStandardizeA> {
+    // Input
+    final int _ncolA;         // Number of cols in training frame
+    final int _ncolX;         // Number of cols in X (k)
+    final int _ncats;         // Number of categorical cols in training frame
+    final double[] _normSub;  // For standardizing training data
+    final double[] _normMul;
+
+    DeStandardizeA(int ncolA, int ncolX, int ncats, double[] normSub, double[] normMul) {
+      assert ncats <= ncolA;
+      _ncolA = ncolA;
+      _ncolX = ncolX;
+      _ncats = ncats;
+
+      _normSub = normSub;
+      _normMul = normMul;
+    }
+
+    @SuppressWarnings("ConstantConditions")  // The method is too complex
+    @Override public void map(Chunk[] cs) {
+      assert _ncolA <= cs.length;
+      if ((_normSub == null) || (_normMul == null)) // do nothing if subtraction or multiplication vectors are null
+        return;
+
+      for (int row = 0; row < cs[0]._len; row++) {
+        // Standardization is performed on numeric columns
+        for (int j = _ncats; j < _ncolA; j++) {
+          double a = cs[j].atd(row);
+          if (Double.isNaN(a)) continue;   // Skip missing observations in row
+
+          int js = j-_ncats;              // perform de-standization for numerical values
+          cs[j].set(row, (a * _normMul[js] + _normSub[js]));
+        }
+      }
+    }
+  }
+
+  // Perform standardization over matrix A for non NA values only
+  private static class StandardizeA extends MRTask<StandardizeA> {
+    // Input
+    final int _ncolA;         // Number of cols in training frame
+    final int _ncolX;         // Number of cols in X (k)
+    final int _ncats;         // Number of categorical cols in training frame
+    final double[] _normSub;  // For standardizing training data
+    final double[] _normMul;
+
+    StandardizeA(int ncolA, int ncolX, int ncats, double[] normSub, double[] normMul) {
+      assert ncats <= ncolA;
+      _ncolA = ncolA;
+      _ncolX = ncolX;
+      _ncats = ncats;
+
+      _normSub = normSub;
+      _normMul = normMul;
+    }
+
+    @SuppressWarnings("ConstantConditions")  // The method is too complex
+    @Override public void map(Chunk[] cs) {
+      assert _ncolA <= cs.length;
+      if ((_normSub == null) || (_normMul == null)) // do nothing if subtraction or multiplication vectors are null
+        return;
+
+      for (int row = 0; row < cs[0]._len; row++) {
+        // Standardization is performed on numeric columns
+        for (int j = _ncats; j < _ncolA; j++) {
+          double a = cs[j].atd(row);
+          if (Double.isNaN(a)) continue;   // Skip missing observations in row
+
+          int js = j-_ncats;              // perform standization for numerical values
+          cs[j].set(row, (a - _normSub[js]) * _normMul[js]);
+        }
+      }
+    }
+  }
+
   // Calculate the sum over the loss function in the optimization objective
   private static class ObjCalc extends MRTask<ObjCalc> {
     // Input
@@ -1457,8 +1568,8 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
     final int _ncolA;         // Number of cols in training frame
     final int _ncolX;         // Number of cols in X (k)
     final int _ncats;         // Number of categorical cols in training frame
-    final double[] _normSub;  // For standardizing training data
-    final double[] _normMul;
+//    final double[] _normSub;  // For standardizing training data
+//    final double[] _normMul;
     final int _weightId;
     final boolean _regX;      // Should I calculate regularization of (old) X matrix?
 
@@ -1466,12 +1577,18 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
     double _loss;       // Loss evaluated on A - XY using new X (and current Y)
     double _xold_reg;   // Regularization evaluated on old X
 
-    ObjCalc(GLRMParameters parms, Archetypes yt, int ncolA, int ncolX, int ncats, double[] normSub, double[] normMul,
+/*    ObjCalc(GLRMParameters parms, Archetypes yt, int ncolA, int ncolX, int ncats, double[] normSub, double[] normMul,
             GlrmLoss[] lossFunc, int weightId) {
       this(parms, yt, ncolA, ncolX, ncats, normSub, normMul, lossFunc, weightId, false);
+    } */
+    ObjCalc(GLRMParameters parms, Archetypes yt, int ncolA, int ncolX, int ncats, GlrmLoss[] lossFunc, int weightId) {
+      this(parms, yt, ncolA, ncolX, ncats, lossFunc, weightId, false);
     }
-    ObjCalc(GLRMParameters parms, Archetypes yt, int ncolA, int ncolX, int ncats, double[] normSub, double[] normMul,
-            GlrmLoss[] lossFunc, int weightId, boolean regX) {
+
+/*    ObjCalc(GLRMParameters parms, Archetypes yt, int ncolA, int ncolX, int ncats, double[] normSub, double[] normMul,
+            GlrmLoss[] lossFunc, int weightId, boolean regX) { */
+    ObjCalc(GLRMParameters parms, Archetypes yt, int ncolA, int ncolX, int ncats, GlrmLoss[] lossFunc,
+            int weightId, boolean regX) {
       assert yt != null && yt.rank() == ncolX;
       assert ncats <= ncolA;
       _parms = parms;
@@ -1483,8 +1600,8 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
       _regX = regX;
 
       _weightId = weightId;
-      _normSub = normSub;
-      _normMul = normMul;
+//      _normSub = normSub;  // TODO: Remove normSub and normMul after things checked out for standardization A onces
+//      _normMul = normMul;
     }
 
     private Chunk chk_xnew(Chunk[] chks, int c) {
@@ -1532,7 +1649,8 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
           int js = j - _ncats;
           for (int k = 0; k < _ncolX; k++)
             xy += chk_xnew(cs, k).atd(row) * _yt.getNum(js, k);
-          _loss += _lossFunc[j].loss(xy, (a - _normSub[js]) * _normMul[js]);
+        //  _loss += _lossFunc[j].loss(xy, (a - _normSub[js]) * _normMul[js]);
+          _loss += _lossFunc[j].loss(xy, a);
         }
         _loss *= cweight;
 
