@@ -1260,7 +1260,7 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
 
         // Update row x_i of working copy with new values
 //        double[] u = new double[_ncolX];  // move this to outside loop to increase efficiency
-        Arrays.fill(u, 0.0);
+ //       Arrays.fill(u, 0.0);
         for (int k = 0; k < _ncolX; k++) {
           double xold = chk_xold(cs, k).atd(row);   // Old value of x_i
           u[k] = xold - _alpha * tgrad[k];
@@ -1441,12 +1441,10 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
     @Override protected void postGlobal() {
       assert _ytnew.length == _ytold.nfeatures() && _ytnew[0].length == _ytold.rank();
       Random rand = RandomUtils.getRNG(_parms._seed);
-      double[] u = new double[_ytnew[0].length];
 
       // Compute new y_j values using proximal gradient
       for (int j = 0; j < _ytnew.length; j++) {
-//        double[] u = new double[_ytnew[0].length];  // reduce memory allocation
-        Arrays.fill(u, 0.0);
+        double[] u = new double[_ytnew[0].length];  // Do not touch this memory allocation.  Needed for proper function.
         for (int k = 0; k < _ytnew[0].length; k++) {
           // double u = _ytold[j][k] - _alpha * _ytnew[j][k];
           // _ytnew[j][k] = _parms.rproxgrad_y(u, _alpha);
@@ -1634,7 +1632,7 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
         if (_regX) {
           int idx = 0;
 //          double[] xrow = new double[_ncolX];
-          Arrays.fill(xrow, 0.0);
+//          Arrays.fill(xrow, 0.0);
           for (int j = _ncolA; j < _ncolA+_ncolX; j++) {
             // double x = cs[j].atd(row);
             // _xold_reg += _parms.regularize_x(x);
@@ -1699,8 +1697,7 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
             int ds = d - _ncats;
             double a = cs[d].atd(row);
             if (Double.isNaN(a)) continue;
- //           x += (a - _normSub[ds]) * _normMul[ds] * _yt.getNum(ds, k);
-            x += a * _yt.getNum(ds, k);
+            x += (a - _normSub[ds]) * _normMul[ds] * _yt.getNum(ds, k);
           }
           xrow[k] = x;
         }
