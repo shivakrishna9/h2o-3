@@ -640,13 +640,6 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
 
         curtime = System.currentTimeMillis();
         double[/*k*/][/*features*/] yinit = initialXY(tinfo, dinfo._adaptedFrame, model, na_cnt); // on normalized A
-
-        // perform normalization on matrix A if needed.
-        StandardizeA standardizeA = null;
-        if (_parms._transform != DataInfo.TransformType.NONE) {
-          standardizeA = new StandardizeA(_ncolA, _ncolX, dinfo._cats, model._output._normSub,
-                  model._output._normMul).doAll(dinfo._adaptedFrame);
-        }
         
         // Store Y' for more efficient matrix ops (rows = features, cols = k rank)
         Archetypes yt = new Archetypes(ArrayUtils.transpose(yinit), true, tinfo._catOffsets, numLevels);
@@ -666,6 +659,12 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
         // Assume regularization on initial X is finite, else objective can be NaN if \gamma_x = 0
         boolean regX = _parms._regularization_x != GlrmRegularizer.None && _parms._gamma_x != 0;
 
+        // perform normalization on matrix A if needed.
+        StandardizeA standardizeA = null;
+        if (_parms._transform != DataInfo.TransformType.NONE) {
+          standardizeA = new StandardizeA(_ncolA, _ncolX, dinfo._cats, model._output._normSub,
+                  model._output._normMul).doAll(dinfo._adaptedFrame);
+        }
         curtime = System.currentTimeMillis();
 /*        ObjCalc objtsk = new ObjCalc(_parms, yt, _ncolA, _ncolX, dinfo._cats, model._output._normSub,
                                      model._output._normMul, model._output._lossFunc, weightId, regX); */
