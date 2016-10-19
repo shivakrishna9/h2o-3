@@ -1190,17 +1190,25 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
           // Gradient wrt x_i is matrix product \grad L_{i,j}(x_i * Y_j, A_{i,j}) * Y_j'
           double[] weight = _lossFunc[j].mlgrad(xy, (int) a[j]);
  //         double[][] ysub = _yt.getCatBlock(j);
-          for (int k = 0; k < _ncolX; k++) {
-            for (int c = 0; c < weight.length; c++) {
- //             grad[k] += cweight * weight[c] * ysub[k][c];
-              int cidx = _yt.getCatCidx(j, c);
-              double archtypevalues = 0;
-              if (_yt._transposed)
+          if (_yt._transposed) {
+            for (int k = 0; k < _ncolX; k++) {
+              for (int c = 0; c < weight.length; c++) {
+                //             grad[k] += cweight * weight[c] * ysub[k][c];
+                int cidx = _yt.getCatCidx(j, c);
+                double archtypevalues = 0;
                 archtypevalues = _yt._archetypes[cidx][k];
-              else
+                tgrad[k] += cweight * weight[c] * archtypevalues;
+              }
+            }
+          } else {
+            for (int k = 0; k < _ncolX; k++) {
+              for (int c = 0; c < weight.length; c++) {
+                //             grad[k] += cweight * weight[c] * ysub[k][c];
+                int cidx = _yt.getCatCidx(j, c);
+                double archtypevalues = 0;
                 archtypevalues = _yt._archetypes[k][cidx];
-
-              tgrad[k] += cweight *weight[c] * archtypevalues;
+                tgrad[k] += cweight * weight[c] * archtypevalues;
+              }
             }
           }
         }
@@ -1278,20 +1286,26 @@ public class GLRM extends ModelBuilder<GLRMModel, GLRMModel.GLRMParameters, GLRM
     /* same as ArrayUtils.multVecArr() but faster I hope. */
     private double[] multVecArrFast(double[] xnew, Archetypes yt, int j) {
       double[] xy = new double[yt._numLevels[j]];
-
-      for (int level = 0; level < yt._numLevels[j]; level++) {
-        int cidx = yt.getCatCidx(j, level);
-        for (int k = 0; k < _ncolX; k++) {
-          double archValue = 0.0;
-
-          if (yt._transposed)
+      if (yt._transposed) {
+        for (int level = 0; level < yt._numLevels[j]; level++) {
+          int cidx = yt.getCatCidx(j, level);
+          for (int k = 0; k < _ncolX; k++) {
+            double archValue = 0.0;
             archValue = yt._archetypes[cidx][k];
-          else
+            xy[level] += xnew[k] * archValue;
+          }
+        }
+      } else {
+        for (int level = 0; level < yt._numLevels[j]; level++) {
+          int cidx = yt.getCatCidx(j, level);
+          for (int k = 0; k < _ncolX; k++) {
+            double archValue = 0.0;
             archValue = yt._archetypes[k][cidx];
-
-          xy[level] += xnew[k] * archValue;
+            xy[level] += xnew[k] * archValue;
+          }
         }
       }
+
       return xy;
     }
 
