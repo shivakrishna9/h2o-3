@@ -6,6 +6,7 @@ import water.H2O.H2OCountedCompleter;
 import water.api.schemas3.KeyV3;
 import water.util.ArrayUtils;
 import water.util.Log;
+import water.util.PrettyPrint;
 
 /** Jobs are used to do minimal tracking of long-lifetime user actions,
  *  including progress-bar updates and the ability to review in progress or
@@ -144,6 +145,7 @@ public final class Job<T extends Keyed> extends Keyed<Job> {
         @Override boolean abort(Job job) { return newworked==0 && ((msg==null && _msg==null) || (msg != null && msg.equals(job._msg))); }
         @Override void update(Job old) { old._worked += newworked; old._msg = msg; }
       }.apply(this);
+      if (msg != null) Log.info("Job progress: " + PrettyPrint.formatPct(progress()) + ", " + msg);
     }
   }
   public final  void update(final long newworked) { update(newworked,(String)null); }

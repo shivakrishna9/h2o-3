@@ -6,6 +6,7 @@ import water.MRTask;
 import water.fvec.C0DChunk;
 import water.fvec.Chunk;
 import water.util.ArrayUtils;
+import water.util.Log;
 
 /**  Score and Build Histogram
  *
@@ -86,11 +87,13 @@ public class ScoreBuildHistogram extends MRTask<ScoreBuildHistogram> {
       DHistogram hs[] = _hcs[l-_leaf];
       int sCols[] = udn._scoreCols;
       if( sCols != null ) { // Sub-selecting just some columns?
-        for( int col : sCols ) // For tracked cols
-          hs[col].init();
+        for( int col : sCols ) { // For tracked cols
+          if (hs != null && hs[col] != null)
+            hs[col].init();
+        }
       } else {                 // Else all columns
         for( int j=0; j<_ncols; j++) // For all columns
-          if( hs[j] != null )        // Tracking this column?
+          if( hs != null && hs[j] != null )        // Tracking this column?
             hs[j].init();
       }
     }
@@ -244,7 +247,13 @@ public class ScoreBuildHistogram extends MRTask<ScoreBuildHistogram> {
     for (int c = 0; c < cols; c++) {
       boolean extracted = false;
       for (int n = 0; n < hcslen; n++) {
-        int sCols[] = _tree.undecided(n + _leaf)._scoreCols; // Columns to score (null, or a list of selected cols)
+        DTree.UndecidedNode udn = _tree.undecided(n + _leaf);
+        if (udn._otherNodeToFillHisto >= 0) {
+          if (SharedTree.DEV_DEBUG)
+            Log.info("Not computing histogram for node " + udn._nid + " and col " + c);
+          continue;
+        }
+        int sCols[] = udn._scoreCols; // Columns to score (null, or a list of selected cols)
         if (sCols == null || ArrayUtils.find(sCols,c) >= 0) {
           if (!extracted) {
             chks[c].getDoubles(cs, 0, cs.length);
@@ -253,7 +262,7 @@ public class ScoreBuildHistogram extends MRTask<ScoreBuildHistogram> {
           DHistogram h = hcs[n][c];
           if( h==null ) continue; // Ignore untracked columns in this split
           lh.resizeIfNeeded(h._w.length);
-          h.updateSharedHistosAndReset(lh, ws, cs, ys, rows, nh[n], n == 0 ? 0 : nh[n - 1]);
+          h.updateSharedHistosAndReset(lh, ws, cs, ys, rows, nh[n], n == 0 ? 0 : nh[n - 1], udn._nid == 0);
         }
       }
     }

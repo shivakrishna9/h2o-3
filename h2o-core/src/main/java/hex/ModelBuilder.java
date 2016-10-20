@@ -226,6 +226,7 @@ abstract public class ModelBuilder<M extends Model<M,P,O>, P extends Model.Param
     else computeCrossValidation();
     return _result.get();
   }
+  final public M trainModelNested() { return trainModelNested(null); }
 
   /** Model-specific implementation of model training
    * @return A F/J Job, which, when executed, does the build.  F/J is NOT started.  */

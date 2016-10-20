@@ -150,6 +150,10 @@ public class GBM extends SharedTree<GBMModel,GBMModel.GBMParameters,GBMModel.GBM
       error("_max_abs_leafnode_pred", "max_abs_leafnode_pred must be larger than 0.");
     if (_parms._pred_noise_bandwidth < 0)
       error("_pred_noise_bandwidth", "pred_noise_bandwidth must be >= 0.");
+    if (_parms._histogram_type == SharedTreeModel.SharedTreeParameters.HistogramType.QuantilesFast || _parms._histogram_type == SharedTreeModel.SharedTreeParameters.HistogramType.Uniform) {
+      if (_parms._col_sample_rate != 1)
+        error("_histogram_type", "QuantilesFast and Uniform histogram types currently don't support column sampling.");
+    }
   }
 
   // ----------------------
@@ -449,7 +453,7 @@ public class GBM extends SharedTree<GBMModel,GBMModel.GBMParameters,GBMModel.GBM
       }
       for (int k = 0; k < _nclass; k++) {
         if (DEV_DEBUG && ktrees[k]!=null) {
-          System.out.println("Updated predictions in WORK col for class " + k + ":\n" + new Frame(new String[]{"WORK"},new Vec[]{vec_work(_train, k)}).toString());
+          System.out.println("Updated predictions in WORK col for class " + k + ":\n" + new Frame(new String[]{"WORK"},new Vec[]{vec_work(_train, k)}).toTwoDimTable());
         }
       }
 
@@ -460,7 +464,7 @@ public class GBM extends SharedTree<GBMModel,GBMModel.GBMParameters,GBMModel.GBM
       growTrees(ktrees, leaves, _rand);
       for (int k = 0; k < _nclass; k++) {
         if (DEV_DEBUG && ktrees[k]!=null) {
-          System.out.println("Grew trees. Updated NIDs for class " + k + ":\n" + new Frame(new String[]{"NIDS"},new Vec[]{vec_nids(_train, k)}).toString());
+          System.out.println("Grew trees. Updated NIDs for class " + k + ":\n" + new Frame(new String[]{"NIDS"},new Vec[]{vec_nids(_train, k)}).toTwoDimTable());
         }
       }
 
@@ -515,7 +519,9 @@ public class GBM extends SharedTree<GBMModel,GBMModel.GBMParameters,GBMModel.GBM
       DHistogram hcs[][][] = new DHistogram[_nclass][1/*just root leaf*/][_ncols];
 
       // Adjust real bins for the top-levels
-      int adj_nbins = Math.max(_parms._nbins_top_level,_parms._nbins);
+      int adj_nbins = _parms._nbins;
+      if (_parms._histogram_type != SharedTreeModel.SharedTreeParameters.HistogramType.Uniform && _parms._histogram_type != SharedTreeModel.SharedTreeParameters.HistogramType.QuantilesFast)
+        adj_nbins = Math.max(_parms._nbins_top_level,_parms._nbins);
 
       long rseed = rand.nextLong();
       // initialize trees
@@ -539,7 +545,7 @@ public class GBM extends SharedTree<GBMModel,GBMModel.GBMParameters,GBMModel.GBM
           if (ss[k] != null) {
             ss[k].getResult();
             if (DEV_DEBUG && ktrees[k]!=null) {
-              System.out.println("Sampled OOB rows. NIDS:\n" + new Frame(vec_nids(_train, k)).toString());
+              System.out.println("Sampled OOB rows. NIDS:\n" + new Frame(vec_nids(_train, k)).toTwoDimTable());
             }
           }
         }
@@ -563,7 +569,7 @@ public class GBM extends SharedTree<GBMModel,GBMModel.GBMParameters,GBMModel.GBM
         if (tree == null) continue;
         int leaf = tree.len();
         leaves[k] = leaf; //record the size of the tree before splitting the bottom nodes as the starting index for the leaf node indices
-        for (int nid = 0; nid < leaf; nid++) {
+        for (int nid = 0; nid < leaf; nid++) { //parents
           if (tree.node(nid) instanceof DecidedNode) {
             DecidedNode dn = tree.decided(nid);
             if (dn._split == null) { // No decision here, no row should have this NID now

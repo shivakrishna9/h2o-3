@@ -54,7 +54,8 @@ public abstract class SharedTreeModel<
 
     public double _min_split_improvement = 1e-5; // Minimum relative improvement in squared error reduction for a split to happen
 
-    public enum HistogramType { AUTO, UniformAdaptive, Random, QuantilesGlobal, RoundRobin }
+    public enum HistogramType { AUTO, Uniform, UniformAdaptive, Random, QuantilesGlobal, QuantilesFast, RoundRobin }
+
     public HistogramType _histogram_type = HistogramType.AUTO; // What type of histogram to use for finding optimal split points
 
     public double _r2_stopping = Double.MAX_VALUE; // Stop when the r^2 metric equals or exceeds this value
@@ -73,7 +74,7 @@ public abstract class SharedTreeModel<
 
     public double[] _sample_rate_per_class; //fraction of rows to sample for each tree, per class
 
-    @Override public long progressUnits() { return _ntrees + (_histogram_type==HistogramType.QuantilesGlobal || _histogram_type==HistogramType.RoundRobin ? 1 : 0); }
+    @Override public long progressUnits() { return _ntrees + (_histogram_type==HistogramType.QuantilesGlobal || _histogram_type == HistogramType.QuantilesFast || _histogram_type==HistogramType.RoundRobin ? 1 : 0); }
 
     public double _col_sample_rate_change_per_level = 1.0f; //relative change of the column sampling rate for every level
     public double _col_sample_rate_per_tree = 1.0f; //fraction of columns to sample for each tree

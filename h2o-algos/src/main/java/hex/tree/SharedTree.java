@@ -145,6 +145,10 @@ public abstract class SharedTree<M extends SharedTreeModel<M,P,O>, P extends Sha
         error("_min_rows", "The dataset size is too small to split for min_rows=" + _parms._min_rows
                 + ": must have at least " + 2*_parms._min_rows + " (weighted) rows, but have only " + sumWeights + ".");
     }
+    if (_parms._histogram_type == SharedTreeModel.SharedTreeParameters.HistogramType.QuantilesFast || _parms._histogram_type == SharedTreeModel.SharedTreeParameters.HistogramType.Uniform) {
+      if (_parms._col_sample_rate_per_tree != 1 || _parms._col_sample_rate_change_per_level != 1)
+        error("_histogram_type", "QuantilesFast and Uniform histogram types currently don't support column sampling.");
+    }
     if( _train != null )
       _ncols = _train.numCols()-1-numSpecialCols();
   }
@@ -222,7 +226,8 @@ public abstract class SharedTree<M extends SharedTreeModel<M,P,O>, P extends Sha
         // top-level quantiles for all columns
         // non-numeric columns get a vector full of NAs
         if (_parms._histogram_type == SharedTreeModel.SharedTreeParameters.HistogramType.QuantilesGlobal
-                || _parms._histogram_type == SharedTreeModel.SharedTreeParameters.HistogramType.RoundRobin) {
+            || _parms._histogram_type == SharedTreeModel.SharedTreeParameters.HistogramType.QuantilesFast
+            || _parms._histogram_type == SharedTreeModel.SharedTreeParameters.HistogramType.RoundRobin) {
           int N = _parms._nbins;
           QuantileModel.QuantileParameters p = new QuantileModel.QuantileParameters();
           Key rndKey = Key.make();
@@ -234,7 +239,8 @@ public abstract class SharedTree<M extends SharedTreeModel<M,P,O>, P extends Sha
           for (int i = 0; i < N; ++i) //compute quantiles such that they span from (inclusive) min...maxEx (exclusive)
             p._probs[i] = i * 1./N;
           Job<QuantileModel> job = new Quantile(p).trainModel();
-          _job.update(1, "Computing top-level histogram splitpoints.");
+          String msg = "Computing top-level histogram splitpoints.";
+          _job.update(1, msg);
           QuantileModel qm = job.get();
           job.remove();
           double[][] origQuantiles = qm._output._quantiles;
@@ -252,8 +258,9 @@ public abstract class SharedTree<M extends SharedTreeModel<M,P,O>, P extends Sha
             splitPoints[i] = ArrayUtils.makeUniqueAndLimitToRange(origQuantiles[i], _train.vec(i).min(), _train.vec(i).max());
             if (splitPoints[i].length <= 1) //not enough split points left - fall back to regular binning
               splitPoints[i] = null;
-            else
+            else if (_parms._histogram_type != SharedTreeModel.SharedTreeParameters.HistogramType.QuantilesFast) {
               splitPoints[i] = ArrayUtils.padUniformly(splitPoints[i], _parms._nbins_top_level);
+            }
             assert splitPoints[i] == null || splitPoints[i].length > 1;
             if (splitPoints[i]!=null && keys[i]!=null) {
 //              Log.info("Creating quantiles for column " + i + " (key: "+ keys[i] +")");
@@ -311,8 +318,10 @@ public abstract class SharedTree<M extends SharedTreeModel<M,P,O>, P extends Sha
 
     // Helpers to store quantiles in DKV - keep a cache on each node (instead of sending around over and over)
     protected Key getGlobalQuantilesKey(int i) {
-      if (_model==null || _model._key == null || _parms._histogram_type!= SharedTreeModel.SharedTreeParameters.HistogramType.QuantilesGlobal
-              && _parms._histogram_type!= SharedTreeModel.SharedTreeParameters.HistogramType.RoundRobin) return null;
+      if (_model==null || _model._key == null
+          || (_parms._histogram_type!= SharedTreeModel.SharedTreeParameters.HistogramType.QuantilesGlobal
+          && _parms._histogram_type!= SharedTreeModel.SharedTreeParameters.HistogramType.QuantilesFast
+          && _parms._histogram_type!= SharedTreeModel.SharedTreeParameters.HistogramType.RoundRobin)) return null;
       return Key.makeSystem(_model._key+"_quantiles_col_"+i);
     }
     protected Key[] getGlobalQuantilesKeys() {
@@ -334,7 +343,7 @@ public abstract class SharedTree<M extends SharedTreeModel<M,P,O>, P extends Sha
       for (int i = 0; i < ntreesFromCheckpoint; i++) _rand.nextLong(); //for determinism
       Log.info("Reconstructing OOB stats from checkpoint took " + t);
       if (DEV_DEBUG) {
-        System.out.println(_train.toString());
+        System.out.println(_train.toTwoDimTable());
       }
     }
 
@@ -394,12 +403,12 @@ public abstract class SharedTree<M extends SharedTreeModel<M,P,O>, P extends Sha
       int workIdx = fr2.numCols(); fr2.add(fr._names[idx_work(k)],vecs[idx_work(k)]); //target value to fit (copy of actual response for DRF, residual for GBM)
       int nidIdx  = fr2.numCols(); fr2.add(fr._names[idx_nids(k)],vecs[idx_nids(k)]); //node indices for tree construction
       if (DEV_DEBUG) {
-        System.out.println("Building a layer for class " + k + ":\n" + fr2.toString());
+        System.out.println("Building a layer for class " + k + ":\n" + fr2.toTwoDimTable());
       }
       // Async tree building
       // step 1: build histograms
       // step 2: split nodes
-      H2O.submitTask(sb1ts[k] = new ScoreBuildOneTree(this,k,nbins, nbins_cats, tree, leafs, hcs, fr2, build_tree_one_node, _improvPerVar, _model._parms._distribution, weightIdx, workIdx, nidIdx));
+      H2O.submitTask(sb1ts[k] = new ScoreBuildOneTree(this,k,nbins, nbins_cats, tree, leafs, hcs, fr2, _improvPerVar, weightIdx, workIdx, nidIdx, _parms));
     }
     // Block for all K trees to complete.
     boolean did_split=false;
@@ -416,7 +425,7 @@ public abstract class SharedTree<M extends SharedTreeModel<M,P,O>, P extends Sha
                         vecs[idx_work(k)],
                         vecs[idx_nids(k)]
                 }
-        ).toString());
+        ).toTwoDimTable());
       }
     }
     // The layer is done.
@@ -430,7 +439,7 @@ public abstract class SharedTree<M extends SharedTreeModel<M,P,O>, P extends Sha
     final int _nbins_cats;      // Categorical columns: Number of histogram bins
     final DTree _tree;
     final int _leafOffsets[/*nclass*/]; //Index of the first leaf node. Leaf indices range from _leafOffsets[k] to _tree._len-1
-    final DHistogram _hcs[/*nclass*/][][];
+    final DHistogram _hcs[/*nclass*/][/*leaves*/][/*cols*/];
     final Frame _fr2;
     final boolean _build_tree_one_node;
     final float[] _improvPerVar;      // Squared Error improvement per variable per split
@@ -438,9 +447,14 @@ public abstract class SharedTree<M extends SharedTreeModel<M,P,O>, P extends Sha
     final int _weightIdx;
     final int _workIdx;
     final int _nidIdx;
+    SharedTreeModel.SharedTreeParameters _params;
 
     boolean _did_split;
-    ScoreBuildOneTree(SharedTree st, int k, int nbins, int nbins_cats, DTree tree, int leafs[], DHistogram hcs[][][], Frame fr2, boolean build_tree_one_node, float[] improvPerVar, DistributionFamily family, int weightIdx, int workIdx, int nidIdx) {
+    ScoreBuildOneTree(SharedTree st, int k, int nbins, int nbins_cats, DTree tree, int leafs[], DHistogram hcs[][][], Frame fr2,
+                      float[] improvPerVar, int weightIdx, int workIdx, int nidIdx,
+                      SharedTreeModel.SharedTreeParameters params) {
+      _params = params;
+      _nidIdx = nidIdx;
       _st   = st;
       _k    = k;
       _nbins= nbins;
@@ -449,12 +463,11 @@ public abstract class SharedTree<M extends SharedTreeModel<M,P,O>, P extends Sha
       _leafOffsets = leafs;
       _hcs  = hcs;
       _fr2  = fr2;
-      _build_tree_one_node = build_tree_one_node;
+      _build_tree_one_node = _params._build_tree_one_node;
       _improvPerVar = improvPerVar;
-      _family = family;
+      _family = _params._distribution;
       _weightIdx = weightIdx;
       _workIdx = workIdx;
-      _nidIdx = nidIdx;
     }
     @Override public void compute2() {
       // Fuse 2 conceptual passes into one:
@@ -473,11 +486,73 @@ public abstract class SharedTree<M extends SharedTreeModel<M,P,O>, P extends Sha
 
       final int leafOffset = _leafOffsets[_k];
       int tmax = _tree.len();   // Number of total splits in tree K
-      for(int leaf = leafOffset; leaf<tmax; leaf++ ) { // Visit all the new splits (leaves)
+
+      // fill in missing histograms
+      for(int leaf = leafOffset; leaf<tmax; leaf++ ) {
         DTree.UndecidedNode udn = _tree.undecided(leaf);
-//        System.out.println((_st._nclass==1?"Regression":("Class "+_st._response.domain()[_k]))+",\n  Undecided node:"+udn);
-        // Replace the Undecided with the Split decision
+        if (udn._otherNodeToFillHisto >= 0) {
+          DTree.DecidedNode parent = _tree.decided(udn._pid);
+//          udn._hs = new DHistogram[parent._histos.length];
+          int[] children = parent._nids;
+          int othernid = children[0] == leaf ? children[1] : children[0];
+          DTree.UndecidedNode otherNode = null;
+          if( othernid >= 0 && _tree.node(othernid) instanceof DTree.UndecidedNode ) {
+            otherNode = _tree.undecided(othernid);
+          }
+          if (udn._scoreCols!=null) {
+            for (int c : udn._scoreCols) {
+//              udn._hs[c] = IcedUtils.deepCopy(parent._histos[c]);
+              DHistogram my = udn._hs[c];
+//              my.clear();
+              if (otherNode != null) {
+                if (DEV_DEBUG)
+                  Log.info("Filling up histogram for node " + udn._nid + " and col " + c);
+                my.setToDiff(parent._histos[c], otherNode._hs[c]);
+              }
+            }
+          } else {
+            for (int c=0; c<udn._hs.length; ++c) {
+//              udn._hs[c] = IcedUtils.deepCopy(parent._histos[c]);
+              DHistogram my = udn._hs[c];
+//              my.clear();
+              if (otherNode != null) {
+                if (DEV_DEBUG)
+                  Log.info("Filling up histogram for node " + udn._nid + " and col " + c);
+                my.setToDiff(parent._histos[c], otherNode._hs[c]);
+              }
+            }
+          }
+          parent._histos = null; // let GC kick in
+        }
+      }
+
+      // Do the actual splitting
+      for(int leaf = leafOffset; leaf<tmax; leaf++ ) { // loop over parents
+        DTree.UndecidedNode udn = _tree.undecided(leaf);
+        if (DEV_DEBUG) {
+          for (int c = 0; c < udn._hs.length; ++c) {
+            System.err.println("Splitting node: " + leaf + " col: " + c + ":\n" + sbh._hcs[leaf - leafOffset][c]);
+          }
+        }
+        // Split the leaf (find the best column), create (up to) two new undecided leaf nodes (and their histograms), return this now decided (split) node
         DTree.DecidedNode dn = _st.makeDecided(udn,sbh._hcs[leaf-leafOffset]);
+        if ((_params._histogram_type == SharedTreeModel.SharedTreeParameters.HistogramType.Uniform || _params._histogram_type == SharedTreeModel.SharedTreeParameters.HistogramType.QuantilesFast)
+            && (dn._nids != null && dn._nids[0] >= 0 && dn._nids[1] >= 0)) {
+
+          final boolean SMART = true; // don't need to compute half the histograms
+          if (SMART) {
+            // try to find a good child node that has a histogram to use to compute the histo for the other child
+            if (_tree.node(dn._nids[0]) instanceof DTree.UndecidedNode) {
+              _tree.undecided(dn._nids[1])._otherNodeToFillHisto = dn._nids[0];
+//              _tree.undecided(dn._nids[1])._hs = null;
+            }
+            else if (_tree.node(dn._nids[1]) instanceof DTree.UndecidedNode) {
+              _tree.undecided(dn._nids[0])._otherNodeToFillHisto = dn._nids[1];
+//              _tree.undecided(dn._nids[0])._hs = null;
+            }
+          }
+        }
+
 //        System.out.println(dn + "\n" + dn._split);
         if( dn._split == null ) udn.do_not_split();
         else {
