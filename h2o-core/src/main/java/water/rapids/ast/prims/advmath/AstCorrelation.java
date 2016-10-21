@@ -122,7 +122,7 @@ public class AstCorrelation extends AstPrimitive {
         xmeans[x] = vecxs[x].mean();
       }
 
-      //Set up double arrays to capture sd(y) and sd(x) * sd(y)
+      //Set up double arrays to capture sd(x), sd(y) and sd(x) * sd(y)
       double[] sigmay = new double[ncoly];
       double[] sigmax = new double[ncoly];
       double[] denom;
