@@ -141,20 +141,20 @@ public class AstCorrelation extends AstPrimitive {
 
       // 1-col returns scalar
       if (ncolx == 1 && ncoly == 1) {
-        return new ValNum((cvs[0].getResult()._cov[0] / (fry.numRows() - 1))/denom[0]);
+        return new ValNum((cvs[0].getResult()._covs[0] / (fry.numRows() - 1))/denom[0]);
       }
 
       //Gather final result, which is the correlation coefficient per column
       Vec[] res = new Vec[ncoly];
       Key<Vec>[] keys = Vec.VectorGroup.VG_LEN1.addVecs(ncoly);
       for (int y = 0; y < ncoly; y++) {
-        res[y] = Vec.makeVec(ArrayUtils.div(ArrayUtils.div(cvs[y].getResult()._cov, (fry.numRows() - 1)), denom[y]), keys[y]);
+        res[y] = Vec.makeVec(ArrayUtils.div(ArrayUtils.div(cvs[y].getResult()._covs, (fry.numRows() - 1)), denom[y]), keys[y]);
       }
 
       return new ValFrame(new Frame(fry._names, res));
     } else { //if (mode.equals(Mode.CompleteObs))
 
-      TaskCompleteObsMean taskCompleteObsMean = new TaskCompleteObsMean(ncoly, ncolx).doAll(new Frame(fry).add(frx));
+      CoVarTaskCompleteObsMean taskCompleteObsMean = new CoVarTaskCompleteObsMean(ncoly, ncolx).doAll(new Frame(fry).add(frx));
       long NACount = taskCompleteObsMean._NACount;
       double[] ymeans = ArrayUtils.div(taskCompleteObsMean._ysum, (fry.numRows() - NACount));
       double[] xmeans = ArrayUtils.div(taskCompleteObsMean._xsum, (fry.numRows() - NACount));
@@ -179,14 +179,14 @@ public class AstCorrelation extends AstPrimitive {
 
       // 1-col returns scalar
       if (ncolx == 1 && ncoly == 1) {
-        return new ValNum((cvs._cov[0][0] / (fry.numRows() - 1 - NACount))/denom[0]);
+        return new ValNum((cvs._covs[0][0] / (fry.numRows() - 1 - NACount))/denom[0]);
       }
 
       //Gather final result, which is the correlation coefficient per column
       Vec[] res = new Vec[ncoly];
       Key<Vec>[] keys = Vec.VectorGroup.VG_LEN1.addVecs(ncoly);
       for (int y = 0; y < ncoly; y++) {
-        res[y] = Vec.makeVec(ArrayUtils.div(ArrayUtils.div(cvs._cov[y], (fry.numRows() - 1 - NACount)), denom[y]), keys[y]);
+        res[y] = Vec.makeVec(ArrayUtils.div(ArrayUtils.div(cvs._covs[y], (fry.numRows() - 1 - NACount)), denom[y]), keys[y]);
       }
 
       return new ValFrame(new Frame(fry._names, res));
@@ -194,7 +194,7 @@ public class AstCorrelation extends AstPrimitive {
   }
 
   private static class CoVarTaskEverything extends MRTask<CoVarTaskEverything> {
-    double[] _cov;
+    double[] _covs;
     final double _xmeans[], _ymean;
 
     CoVarTaskEverything(double ymean, double[] xmeans) {
@@ -207,31 +207,31 @@ public class AstCorrelation extends AstPrimitive {
       final int ncolsx = cs.length - 1;
       final Chunk cy = cs[0];
       final int len = cy._len;
-      _cov = new double[ncolsx];
+      _covs = new double[ncolsx];
       double sum;
       for (int x = 0; x < ncolsx; x++) {
         sum = 0;
         final Chunk cx = cs[x + 1];
         final double xmean = _xmeans[x];
-        for (int row = 0; row < len; row++) {
+        for (int row = 0; row < len; row++)
           sum += (cx.atd(row) - xmean) * (cy.atd(row) - _ymean);
-        }
-        _cov[x] = sum;
+        _covs[x] = sum;
       }
     }
 
     @Override
     public void reduce(CoVarTaskEverything cvt) {
-      ArrayUtils.add(_cov, cvt._cov);
+      ArrayUtils.add(_covs, cvt._covs);
     }
   }
 
-  private static class TaskCompleteObsMean extends MRTask<TaskCompleteObsMean> {
+
+  private static class CoVarTaskCompleteObsMean extends MRTask<CoVarTaskCompleteObsMean> {
     double[] _xsum, _ysum;
     long _NACount;
     int _ncolx, _ncoly;
 
-    TaskCompleteObsMean(int ncoly, int ncolx) {
+    CoVarTaskCompleteObsMean(int ncoly, int ncolx) {
       _ncolx = ncolx;
       _ncoly = ncoly;
     }
@@ -286,7 +286,7 @@ public class AstCorrelation extends AstPrimitive {
     }
 
     @Override
-    public void reduce(TaskCompleteObsMean cvt) {
+    public void reduce(CoVarTaskCompleteObsMean cvt) {
       ArrayUtils.add(_xsum, cvt._xsum);
       ArrayUtils.add(_ysum, cvt._ysum);
       _NACount += cvt._NACount;
@@ -294,7 +294,7 @@ public class AstCorrelation extends AstPrimitive {
   }
 
   private static class CoVarTaskCompleteObs extends MRTask<CoVarTaskCompleteObs> {
-    double[][] _cov;
+    double[][] _covs;
     final double _xmeans[], _ymeans[];
 
     CoVarTaskCompleteObs(double[] ymeans, double[] xmeans) {
@@ -308,8 +308,8 @@ public class AstCorrelation extends AstPrimitive {
       int ncoly = _ymeans.length;
       double[] xvals = new double[ncolx];
       double[] yvals = new double[ncoly];
-      _cov = new double[ncoly][ncolx];
-      double[] _cov_y;
+      _covs = new double[ncoly][ncolx];
+      double[] _covs_y;
       double xval, yval, ymean;
       boolean add;
       int len = cs[0]._len;
@@ -344,12 +344,11 @@ public class AstCorrelation extends AstPrimitive {
         //add is true iff row has been traversed and found no NAs among yvals and xvals
         if (add) {
           for (int y = 0; y < ncoly; y++) {
-            _cov_y = _cov[y];
+            _covs_y = _covs[y];
             yval = yvals[y];
             ymean = _ymeans[y];
-            for (int x = 0; x < ncolx; x++) {
-              _cov_y[x] += (xvals[x] - _xmeans[x]) * (yval - ymean);
-            }
+            for (int x = 0; x < ncolx; x++)
+              _covs_y[x] += (xvals[x] - _xmeans[x]) * (yval - ymean);
           }
         }
       }
@@ -357,7 +356,7 @@ public class AstCorrelation extends AstPrimitive {
 
     @Override
     public void reduce(CoVarTaskCompleteObs cvt) {
-      ArrayUtils.add(_cov, cvt._cov);
+      ArrayUtils.add(_covs, cvt._covs);
     }
   }
 
