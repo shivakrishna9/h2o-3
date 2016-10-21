@@ -115,46 +115,40 @@ public class AstCorrelation extends AstPrimitive {
           if (v.naCnt() != 0)
             throw new IllegalArgumentException("Mode is 'all.obs' but NAs are present");
       }
-      TaskEverything[] cvs = new TaskEverything[ncoly];
+      CoVarTaskEverything[] cvs = new CoVarTaskEverything[ncoly];
 
       double[] xmeans = new double[ncolx];
-      for (int x = 0; x < ncoly; x++)
+      for (int x = 0; x < ncoly; x++) {
         xmeans[x] = vecxs[x].mean();
+      }
+
+      //Set up double arrays to capture sd(y) and sd(x) * sd(y)
+      double[] sigmay = new double[ncoly];
+      double[] sigmax = new double[ncoly];
+      double[] denom;
 
       // Launch tasks; each does all Xs vs one Y
       for (int y = 0; y < ncoly; y++) {
-        cvs[y] = new TaskEverything(vecys[y].mean(), xmeans).dfork(new Frame(vecys[y]).add(frx));
-      }
-
-
-      //Calculate standard deviation of x and standard deviation of y
-      double[] sigmax = new double[ncoly];
-      double[] sigmay = new double[ncoly];
-      double[] denom = new double[ncoly];
-
-      // 1-col returns scalar
-      if (ncolx == 1 && ncoly == 1) {
-        sigmax[0] = Math.sqrt(Math.abs(cvs[0].getResult()._denomx[0] / (frx.numRows() - 1)));
-        sigmay[0] = Math.sqrt(Math.abs(cvs[0].getResult()._denomy[0] / (fry.numRows() - 1)));
-        denom[0] = sigmax[0]*sigmay[0];
-        return new ValNum((cvs[0].getResult()._cor[0] / (fry.numRows() - 1))/denom[0]);
-      }
-
-      for (int y = 0; y < ncoly; y++) {
-        //Calculate standard deviation of y
-        sigmay[y] = Math.sqrt(Math.abs(cvs[y].getResult()._denomy[y] / (fry.numRows() - 1)));
-        //Calculate standard deviation of x
-        sigmax[y] = Math.sqrt(Math.abs(cvs[y].getResult()._denomx[y] / (frx.numRows() - 1)));
+        //Get covariance between x and y
+        cvs[y] = new CoVarTaskEverything(vecys[y].mean(), xmeans).dfork(new Frame(vecys[y]).add(frx));
+        //Get sigma_x and sigma_y
+        sigmax[y] = vecxs[y].sigma();
+        sigmay[y] = vecys[y].sigma();
       }
 
       //Denominator for correlation calculation is sigma_x * sigma_y
       denom = ArrayUtils.mult(sigmax,sigmay);
 
+      // 1-col returns scalar
+      if (ncolx == 1 && ncoly == 1) {
+        return new ValNum((cvs[0].getResult()._cov[0] / (fry.numRows() - 1))/denom[0]);
+      }
+
       //Gather final result, which is the correlation coefficient per column
       Vec[] res = new Vec[ncoly];
       Key<Vec>[] keys = Vec.VectorGroup.VG_LEN1.addVecs(ncoly);
       for (int y = 0; y < ncoly; y++) {
-        res[y] = Vec.makeVec(ArrayUtils.div(ArrayUtils.div(cvs[y].getResult()._cor, (fry.numRows() - 1)), denom[y]), keys[y]);
+        res[y] = Vec.makeVec(ArrayUtils.div(ArrayUtils.div(cvs[y].getResult()._cov, (fry.numRows() - 1)), denom[y]), keys[y]);
       }
 
       return new ValFrame(new Frame(fry._names, res));
@@ -166,49 +160,44 @@ public class AstCorrelation extends AstPrimitive {
       double[] xmeans = ArrayUtils.div(taskCompleteObsMean._xsum, (fry.numRows() - NACount));
 
       // 1 task with all Xs and Ys
-      TaskCompleteObs cvs = new TaskCompleteObs(ymeans, xmeans).doAll(new Frame(fry).add(frx));
+      CoVarTaskCompleteObs cvs = new CoVarTaskCompleteObs(ymeans, xmeans).doAll(new Frame(fry).add(frx));
 
-      //Calculate standard deviation of x and standard deviation of y
-      double[] sigmax = new double[ncoly];
+      //Set up double arrays to capture sd(y) and sd(x) * sd(y)
       double[] sigmay = new double[ncoly];
+      double[] sigmax = new double[ncoly];
       double[] denom = new double[ncoly];
 
-      // 1-col returns scalar
-      // 1-col returns scalar
-      if (ncolx == 1 && ncoly == 1) {
-        sigmax[0] = Math.sqrt(Math.abs(cvs._denomx[0][0] / (frx.numRows() - 1 - NACount)));
-        sigmay[0] = Math.sqrt(Math.abs(cvs._denomy[0][0] / (fry.numRows() - 1 - NACount)));
-        denom[0] = sigmax[0]*sigmay[0];
-        return new ValNum((cvs.getResult()._cor[0][0] / (fry.numRows() - 1 - NACount))/denom[0]);
-      }
-
+      // Launch tasks; each does all Xs vs one Y
       for (int y = 0; y < ncoly; y++) {
-        //Calculate standard deviation of y
-        sigmay[y] = Math.sqrt(Math.abs(cvs._denomy[y][y] / (fry.numRows() - 1 - NACount)));
-        //Calculate standard deviation of x
-        sigmax[y] = Math.sqrt(Math.abs(cvs._denomx[y][y] / (frx.numRows() - 1 - NACount)));
+        //Get sigma_x and sigma_y
+        sigmay[y] = vecys[y].sigma();
+        sigmax[y] = vecxs[y].sigma();
       }
 
       //Denominator for correlation calculation is sigma_x * sigma_y
       denom = ArrayUtils.mult(sigmax,sigmay);
 
-      // Gather all the Xs-vs-Y correlation arrays; divide by rows
+      // 1-col returns scalar
+      if (ncolx == 1 && ncoly == 1) {
+        return new ValNum((cvs._cov[0][0] / (fry.numRows() - 1 - NACount))/denom[0]);
+      }
+
+      //Gather final result, which is the correlation coefficient per column
       Vec[] res = new Vec[ncoly];
       Key<Vec>[] keys = Vec.VectorGroup.VG_LEN1.addVecs(ncoly);
       for (int y = 0; y < ncoly; y++) {
-        res[y] = Vec.makeVec(ArrayUtils.div(ArrayUtils.div(cvs._cor[y], (fry.numRows() - 1 - NACount)), denom[y]), keys[y]);
+        res[y] = Vec.makeVec(ArrayUtils.div(ArrayUtils.div(cvs._cov[y], (fry.numRows() - 1 - NACount)), denom[y]), keys[y]);
       }
+
       return new ValFrame(new Frame(fry._names, res));
     }
   }
 
-  private static class TaskEverything extends MRTask<TaskEverything> {
-    double[] _cor;
-    double[] _denomx;
-    double[] _denomy;
+  private static class CoVarTaskEverything extends MRTask<CoVarTaskEverything> {
+    double[] _cov;
     final double _xmeans[], _ymean;
 
-    TaskEverything(double ymean, double[] xmeans) {
+    CoVarTaskEverything(double ymean, double[] xmeans) {
       _ymean = ymean;
       _xmeans = xmeans;
     }
@@ -218,34 +207,22 @@ public class AstCorrelation extends AstPrimitive {
       final int ncolsx = cs.length - 1;
       final Chunk cy = cs[0];
       final int len = cy._len;
-      _cor = new double[ncolsx];
-      _denomx = new double[ncolsx];
-      _denomy = new double[ncolsx];
+      _cov = new double[ncolsx];
       double sum;
-      double sumx;
-      double sumy;
       for (int x = 0; x < ncolsx; x++) {
         sum = 0;
-        sumx = 0;
-        sumy = 0;
         final Chunk cx = cs[x + 1];
         final double xmean = _xmeans[x];
         for (int row = 0; row < len; row++) {
-          sumx += (cx.atd(row) - xmean) * (cx.atd(row) - xmean);
-          sumy += (cy.atd(row) - _ymean) * (cy.atd(row) - _ymean);
           sum += (cx.atd(row) - xmean) * (cy.atd(row) - _ymean);
         }
-        _cor[x] = sum;
-        _denomx[x] = sumx;
-        _denomy[x] = sumy;
+        _cov[x] = sum;
       }
     }
 
     @Override
-    public void reduce(TaskEverything cvt) {
-      ArrayUtils.add(_cor, cvt._cor);
-      ArrayUtils.add(_denomx, cvt._denomx);
-      ArrayUtils.add(_denomy, cvt._denomy);
+    public void reduce(CoVarTaskEverything cvt) {
+      ArrayUtils.add(_cov, cvt._cov);
     }
   }
 
@@ -316,13 +293,11 @@ public class AstCorrelation extends AstPrimitive {
     }
   }
 
-  private static class TaskCompleteObs extends MRTask<TaskCompleteObs> {
-    double[][] _cor;
-    double[][] _denomx;
-    double[][] _denomy;
+  private static class CoVarTaskCompleteObs extends MRTask<CoVarTaskCompleteObs> {
+    double[][] _cov;
     final double _xmeans[], _ymeans[];
 
-    TaskCompleteObs(double[] ymeans, double[] xmeans) {
+    CoVarTaskCompleteObs(double[] ymeans, double[] xmeans) {
       _ymeans = ymeans;
       _xmeans = xmeans;
     }
@@ -333,12 +308,8 @@ public class AstCorrelation extends AstPrimitive {
       int ncoly = _ymeans.length;
       double[] xvals = new double[ncolx];
       double[] yvals = new double[ncoly];
-      _cor = new double[ncoly][ncolx];
-      _denomx = new double[ncoly][ncolx];
-      _denomy = new double[ncoly][ncolx];
-      double[] _cor_y;
-      double[] _denom_x;
-      double[] _denom_y;
+      _cov = new double[ncoly][ncolx];
+      double[] _cov_y;
       double xval, yval, ymean;
       boolean add;
       int len = cs[0]._len;
@@ -373,15 +344,11 @@ public class AstCorrelation extends AstPrimitive {
         //add is true iff row has been traversed and found no NAs among yvals and xvals
         if (add) {
           for (int y = 0; y < ncoly; y++) {
-            _cor_y = _cor[y];
-            _denom_x = _denomx[y];
-            _denom_y = _denomy[y];
+            _cov_y = _cov[y];
             yval = yvals[y];
             ymean = _ymeans[y];
             for (int x = 0; x < ncolx; x++) {
-              _cor_y[x] += (xvals[x] - _xmeans[x]) * (yval - ymean);
-              _denom_x[x] += (xvals[x] - _xmeans[x]) * (xvals[x] - _xmeans[x]);
-              _denom_y[x] += (yval - ymean) * (yval - ymean);
+              _cov_y[x] += (xvals[x] - _xmeans[x]) * (yval - ymean);
             }
           }
         }
@@ -389,10 +356,8 @@ public class AstCorrelation extends AstPrimitive {
     }
 
     @Override
-    public void reduce(TaskCompleteObs cvt) {
-      ArrayUtils.add(_cor, cvt._cor);
-      ArrayUtils.add(_denomx, cvt._denomx);
-      ArrayUtils.add(_denomy, cvt._denomy);
+    public void reduce(CoVarTaskCompleteObs cvt) {
+      ArrayUtils.add(_cov, cvt._cov);
     }
   }
 
