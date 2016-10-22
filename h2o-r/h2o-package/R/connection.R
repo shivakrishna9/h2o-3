@@ -129,7 +129,7 @@ h2o.init <- function(ip = "localhost", port = 54321, startH2O = TRUE, forceDL = 
         nthreads <- 2
       }
       stdout <- .h2o.getTmpFile("stdout")
-      .h2o.startJar(nthreads = nthreads, max_memory = max_mem_size, min_memory = min_mem_size,
+      .h2o.startJar(ip = ip, port = port,nthreads = nthreads, max_memory = max_mem_size, min_memory = min_mem_size,
                     enable_assertions = enable_assertions, forceDL = forceDL, license = license, ice_root = ice_root, stdout=stdout)
 
       count <- 0L
@@ -404,7 +404,7 @@ h2o.clusterStatus <- function() {
 
 .Last <- function() { if ( .isConnected() ) try(.h2o.__remoteSend("InitID", method = "DELETE"), TRUE)}
 
-.h2o.startJar <- function(nthreads = -1, max_memory = NULL, min_memory = NULL, enable_assertions = TRUE, forceDL = FALSE, license = NULL, ice_root, stdout) {
+.h2o.startJar <- function(ip = ip, port = port,nthreads = -1, max_memory = NULL, min_memory = NULL, enable_assertions = TRUE, forceDL = FALSE, license = NULL, ice_root, stdout) {
   command <- .h2o.checkJava()
 
   if (! is.null(license)) {
